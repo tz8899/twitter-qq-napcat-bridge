@@ -1,0 +1,21 @@
+{
+  "twapiUrl": "http://127.0.0.1:30192",
+  "napcatApiUrl": "http://127.0.0.1:3002",
+  "napcatToken": "YOUR_NAPCAT_ONEBOT_TOKEN",
+  "intervalSeconds": 30,
+  "fetchCount": 5,
+  "imageCacheHostPath": "/path/on/host/napcat/cache",
+  "imageCacheContainerPath": "/path/in/napcat/container/cache",
+  "monitors": [
+    {
+      "username": "example_account",
+      "targetType": "private",
+      "targetId": "YOUR_QQ_USER_ID"
+    },
+    {
+      "username": "another_example_account",
+      "targetType": "group",
+      "targetId": "YOUR_QQ_GROUP_ID"
+    }
+  ]
+}

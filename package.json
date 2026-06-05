@@ -1,0 +1,19 @@
+{
+  "name": "twitter-qq-napcat-bridge",
+  "version": "1.0.0",
+  "description": "X/Twitter to QQ bridge through twapi and NapCat OneBot HTTP API.",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js",
+    "check": "node --check bridge.js"
+  },
+  "keywords": [
+    "twitter",
+    "x",
+    "qq",
+    "napcat",
+    "onebot",
+    "twapi"
+  ],
+  "license": "MIT"
+}

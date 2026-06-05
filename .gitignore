@@ -1,0 +1,15 @@
+config.json
+state.json
+*.log
+bridge.log
+cache/
+node_modules/
+.env
+.env.*
+napcat-data/
+*.bak
+*.tmp
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
