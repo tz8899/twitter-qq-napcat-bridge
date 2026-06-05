@@ -41,6 +41,38 @@ function saveState() {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
+function normalizeTarget(target) {
+  const targetType = target && target.targetType;
+  const targetId = target && target.targetId !== undefined ? String(target.targetId).trim() : "";
+  if (!["group", "private"].includes(targetType) || !targetId) return null;
+  return { targetType, targetId };
+}
+
+function normalizeMonitorTargets(monitor) {
+  const targets = Array.isArray(monitor.targets) ? monitor.targets.map(normalizeTarget).filter(Boolean) : [];
+  const singleTarget = normalizeTarget(monitor);
+  if (singleTarget) targets.push(singleTarget);
+  return targets;
+}
+
+function dedupeTargets(targets) {
+  return [...new Map(targets.map(target => [`${target.targetType}:${target.targetId}`, target])).values()];
+}
+
+function buildMonitorJobs(monitors) {
+  const jobs = new Map();
+  for (const monitor of monitors || []) {
+    if (!monitor.username) continue;
+    if (!jobs.has(monitor.username)) jobs.set(monitor.username, { username: monitor.username, targets: [] });
+    jobs.get(monitor.username).targets.push(...normalizeMonitorTargets(monitor));
+  }
+  return [...jobs.values()].map(job => ({ ...job, targets: dedupeTargets(job.targets) }));
+}
+
+function targetLabel(target) {
+  return target.targetType === "group" ? `群 ${target.targetId}` : `私聊 ${target.targetId}`;
+}
+
 // 通过 twapi 获取用户推文
 function fetchTweets(username) {
   return new Promise((resolve, reject) => {
@@ -181,88 +213,121 @@ function formatTweetText(username, tweet) {
   return `🐦 @${username} (${tweet.display_name || ""})\n${text}\n🕐 ${time}\n❤️ ${tweet.likes || 0}  💬 ${tweet.replies || 0}  🔄 ${tweet.retweets || 0}\n🔗 https://x.com/${username}/status/${tweet.id}`;
 }
 
-async function pushTweet(username, tweet, targetType, targetId) {
+async function buildTweetMessage(username, tweet) {
+  const images = tweet.images || [];
+  const textMsg = formatTweetText(username, tweet);
+  const message = [
+    { type: "text", data: { text: textMsg + (images.length ? "\n" : "") } },
+  ];
+
+  for (const imgUrl of images) {
+    try {
+      console.log(`  📷 下载图片: ${imgUrl.substring(0,60)}...`);
+      const localPath = await downloadImage(imgUrl);
+      message.push({ type: "image", data: { file: localPath } });
+    } catch(e) {
+      console.log(`  ⚠️ 图片失败: ${e.message}`);
+    }
+  }
+
+  return message;
+}
+
+async function pushTweet(username, tweet, targets) {
   const timeStr = new Date().toLocaleTimeString("zh-CN", {timeZone:"Asia/Shanghai"});
   const preview = tweet.text ? tweet.text.substring(0, 50) : "";
   console.log(`[${timeStr}] 🐦 @${username}: ${preview}...`);
 
-  try {
-    const images = tweet.images || [];
-    const textMsg = formatTweetText(username, tweet);
-    const message = [
-      { type: "text", data: { text: textMsg + (images.length ? "\n" : "") } },
-    ];
-
-    for (const imgUrl of images) {
-      try {
-        console.log(`  📷 下载图片: ${imgUrl.substring(0,60)}...`);
-        const localPath = await downloadImage(imgUrl);
-        message.push({ type: "image", data: { file: localPath } });
-      } catch(e) {
-        console.log(`  ⚠️ 图片失败: ${e.message}`);
-      }
-    }
-
-    await sendQQ(targetType, targetId, message);
-    const imageCount = message.filter(segment => segment.type === "image").length;
-    console.log(imageCount > 0 ? `  ✅ 图文发送成功（${imageCount}张图片）` : `  ✅ 文字发送成功`);
-  } catch(e) {
-    console.log(`  ❌ 推送失败: ${e.message}`);
+  const validTargets = dedupeTargets((targets || []).map(normalizeTarget).filter(Boolean));
+  if (!validTargets.length) {
+    console.log("  ⚠️ 没有可用推送目标");
+    return [];
   }
+
+  const message = await buildTweetMessage(username, tweet);
+  const imageCount = message.filter(segment => segment.type === "image").length;
+  const results = [];
+
+  for (const target of validTargets) {
+    try {
+      await sendQQ(target.targetType, target.targetId, message);
+      results.push({ target, ok: true });
+      console.log(imageCount > 0 ? `  ✅ ${targetLabel(target)} 图文发送成功（${imageCount}张图片）` : `  ✅ ${targetLabel(target)} 文字发送成功`);
+    } catch(e) {
+      results.push({ target, ok: false });
+      console.log(`  ❌ ${targetLabel(target)} 推送失败: ${e.message}`);
+    }
+  }
+
+  return results;
 }
 
-async function checkUser(username, targetType, targetId) {
+function stateKey(username, target) {
+  return `${username}:${target.targetType}:${target.targetId}`;
+}
+
+function getLastId(username, target) {
+  return state.lastIds[stateKey(username, target)] || state.lastIds[username] || 0;
+}
+
+function setLastId(username, target, tweetId) {
+  const key = stateKey(username, target);
+  state.lastIds[key] = Math.max(state.lastIds[key] || 0, tweetId);
+}
+
+async function checkUser(job) {
   try {
-    const tweets = await fetchTweets(username);
+    const tweets = await fetchTweets(job.username);
     if (!tweets.length) return;
+    if (!job.targets.length) {
+      console.log(`⚠️ @${job.username} 没有配置推送目标`);
+      return;
+    }
 
-    const lastId = state.lastIds[username] || 0;
-    const newTweets = tweets.filter(t => {
-      const id = parseInt(t.id) || 0;
-      return id > lastId;
-    });
-
-    if (!newTweets.length) return;
-
-    // 按时间正序推送
-    newTweets.sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
+    const newTweets = tweets
+      .filter(tweet => job.targets.some(target => (parseInt(tweet.id) || 0) > getLastId(job.username, target)))
+      .sort((a, b) => (parseInt(a.id) || 0) - (parseInt(b.id) || 0));
 
     for (const tweet of newTweets) {
-      await pushTweet(username, tweet, targetType, targetId);
-      state.lastIds[username] = Math.max(state.lastIds[username] || 0, parseInt(tweet.id) || 0);
+      const tweetId = parseInt(tweet.id) || 0;
+      const pendingTargets = job.targets.filter(target => tweetId > getLastId(job.username, target));
+      const results = await pushTweet(job.username, tweet, pendingTargets);
+      for (const result of results) {
+        if (result.ok) setLastId(job.username, result.target, tweetId);
+      }
       saveState();
-      // 间隔避免限流
       await new Promise(r => setTimeout(r, 1000));
     }
   } catch(e) {
-    console.log(`❌ @${username} 抓取失败: ${e.message}`);
+    console.log(`❌ @${job.username} 抓取失败: ${e.message}`);
   }
 }
 
 async function main() {
+  const monitorJobs = buildMonitorJobs(cfg.monitors);
   console.log("🚀 X/Twitter → QQ 转发桥启动！");
   console.log(`🔗 twapi: ${cfg.twapiUrl}`);
   console.log(`📡 Napcat: ${cfg.napcatApiUrl}`);
   console.log(`⏰ 检查间隔: ${cfg.intervalSeconds}秒`);
-  console.log(`📋 监控: ${cfg.monitors.map(m => `@${m.username}`).join(", ")}`);
+  console.log(`📋 监控: ${monitorJobs.map(job => `@${job.username} → ${job.targets.map(targetLabel).join("、") || "未配置目标"}`).join("；")}`);
   console.log(`📅 ${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}\n`);
 
-  // 初始化
-  for (const m of cfg.monitors) {
+  for (const job of monitorJobs) {
     try {
-      const tweets = await fetchTweets(m.username);
+      const tweets = await fetchTweets(job.username);
       if (tweets.length > 0) {
-        state.lastIds[m.username] = Math.max(...tweets.map(t => parseInt(t.id) || 0));
-        console.log(`📌 @${m.username} 初始化，最新ID: ${state.lastIds[m.username]}`);
+        const latestId = Math.max(...tweets.map(t => parseInt(t.id) || 0));
+        for (const target of job.targets) setLastId(job.username, target, latestId);
+        console.log(`📌 @${job.username} 初始化，最新ID: ${latestId}`);
       }
-    } catch(e) { console.log(`⚠️ @${m.username} 初始化失败: ${e.message}`); }
+    } catch(e) { console.log(`⚠️ @${job.username} 初始化失败: ${e.message}`); }
   }
   saveState();
   console.log("📌 等待新推文...\n");
 
   setInterval(async () => {
-    for (const m of cfg.monitors) {
-      await checkUser(m.username, m.targetType, m.targetId);
+    for (const job of monitorJobs) {
+      await checkUser(job);
     }
   }, cfg.intervalSeconds * 1000);
 }

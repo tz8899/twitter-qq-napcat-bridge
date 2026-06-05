@@ -9,13 +9,21 @@
   "monitors": [
     {
       "username": "example_account",
-      "targetType": "private",
-      "targetId": "YOUR_QQ_USER_ID"
+      "targets": [
+        {
+          "targetType": "group",
+          "targetId": "YOUR_QQ_GROUP_ID_1"
+        },
+        {
+          "targetType": "group",
+          "targetId": "YOUR_QQ_GROUP_ID_2"
+        }
+      ]
     },
     {
       "username": "another_example_account",
-      "targetType": "group",
-      "targetId": "YOUR_QQ_GROUP_ID"
+      "targetType": "private",
+      "targetId": "YOUR_QQ_USER_ID"
     }
   ]
 }

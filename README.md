@@ -5,7 +5,7 @@
 ## 功能
 
 - 监控一个或多个 X/Twitter 账号
-- 支持私聊或群聊目标
+- 支持一个监控账号配置一个或多个私聊/群聊目标
 - 文字和图片合并为同一条 QQ 消息发送
 - 自动修正部分 Twitter/Nitter 图片地址
 - 图片先下载到本地缓存，再交给 NapCat 发送
@@ -44,13 +44,21 @@ cp config.example.json config.json
   "monitors": [
     {
       "username": "example_account",
-      "targetType": "private",
-      "targetId": "YOUR_QQ_USER_ID"
+      "targets": [
+        {
+          "targetType": "group",
+          "targetId": "YOUR_QQ_GROUP_ID_1"
+        },
+        {
+          "targetType": "group",
+          "targetId": "YOUR_QQ_GROUP_ID_2"
+        }
+      ]
     },
     {
       "username": "another_example_account",
-      "targetType": "group",
-      "targetId": "YOUR_QQ_GROUP_ID"
+      "targetType": "private",
+      "targetId": "YOUR_QQ_USER_ID"
     }
   ]
 }
@@ -68,8 +76,13 @@ cp config.example.json config.json
 | `imageCacheHostPath` | 桥接程序写入图片的宿主机目录 |
 | `imageCacheContainerPath` | NapCat 进程读取同一批图片时看到的目录 |
 | `monitors[].username` | 要监控的 X/Twitter 用户名，不带 `@` |
-| `monitors[].targetType` | `private` 表示私聊，`group` 表示群聊 |
-| `monitors[].targetId` | QQ 用户 ID 或群号 |
+| `monitors[].targets[]` | 同一个账号要推送到的多个目标，可同时配置多个群或私聊 |
+| `monitors[].targetType` | 单目标兼容写法：`private` 表示私聊，`group` 表示群聊 |
+| `monitors[].targetId` | 单目标兼容写法：QQ 用户 ID 或群号 |
+| `monitors[].targets[].targetType` | 多目标写法：`private` 表示私聊，`group` 表示群聊 |
+| `monitors[].targets[].targetId` | 多目标写法：QQ 用户 ID 或群号 |
+
+推荐新配置使用 `targets`。旧的 `targetType` + `targetId` 仍然兼容，但同一个账号要推送到多个 QQ 目标时应该使用 `targets`，避免多个目标之间互相影响去重状态。
 
 如果桥接程序和 NapCat 在同一个文件系统内运行，可以把 `imageCacheContainerPath` 配成和 `imageCacheHostPath` 一样。
 
@@ -128,7 +141,7 @@ bridge.js
   ↓
 NapCat OneBot HTTP API
   ↓
-QQ 私聊 / QQ 群
+QQ 私聊 / QQ 群（可配置多个目标）
 ```
 
 ## 隐私和安全
